@@ -1,0 +1,8 @@
+# Binary from `go build` at the repo root
+/easy-music
+*.test
+*.out
+
+# Local runtime dirs when running outside Docker
+/data/
+.env

@@ -1,0 +1,51 @@
+# easy-music behind idlegate (https://github.com/nine9123/idlegate).
+#
+# idlegate owns the published port and stops easy-music after 30 minutes
+# without traffic; the next request starts it again (a second or two). While
+# music plays the web UI sends a heartbeat every few minutes, so a long album
+# or a fully buffered track never gets the server stopped mid-listen, and an
+# open radio stream or video counts as traffic by itself.
+#
+# Storage, by what it costs to lose:
+#   /music      HDD, read-only. Your library; never written to.
+#   /downloads  HDD, writable. URL imports land here (and are scanned like
+#               /music). Leave it out to disable imports.
+#   /cache      SSD. Index, covers, and copies of your most-played tracks so
+#               everyday listening doesn't spin the HDD up. Delete it any time:
+#               it is all rebuilt.
+#   /config     SSD, small. Play counts, favorites, playlists, stations, the
+#               import queue. Not rebuildable: back this one up.
+services:
+  idlegate:
+    image: gitea.internal:30008/nine9/idlegate:latest   # or build: https://github.com/nine9123/idlegate.git
+    container_name: idlegate
+    restart: unless-stopped
+    depends_on: [easy-music]
+    ports:
+      - "8080:8080"
+    environment:
+      # health=/healthz is optional (easy-music only listens once it's ready)
+      # but costs nothing.
+      ROUTES: |
+        :8080 http://easy-music:8080 easy-music idle=30m health=/healthz
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  easy-music:
+    build: .   # or the image your registry builds from this repo
+    container_name: easy-music     # idlegate needs a fixed name
+    restart: unless-stopped        # NOT always: a sleeping app must stay asleep across reboots
+    user: "1000:1000"              # owner of the directories below
+    # no ports: — reached only through idlegate
+    environment:
+      HOTCACHE_SIZE: "8G"          # SSD space for most-played tracks (0 disables)
+      # HOTCACHE_MIN_PLAYS: "3"
+      # COVER_FETCH: "true"        # look up missing covers on MusicBrainz / Cover Art Archive
+      # SCAN_ON_START: "true"      # rescan on every wake; "false" leaves the HDD alone until you press Rescan
+      # SCAN_INTERVAL: "0"         # e.g. "6h"; only runs while the container is awake
+      # MUSIC_DIRS: "/music,/music2"
+    volumes:
+      - /mnt/hdd/music:/music:ro
+      - /mnt/hdd/music-imports:/downloads
+      - /mnt/ssd/easy-music/cache:/cache
+      - /mnt/ssd/easy-music/config:/config
