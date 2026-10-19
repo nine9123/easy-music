@@ -104,20 +104,28 @@ func (s *Server) updatePlaylist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, s.summarize(p))
 }
 
-// addToPlaylist: POST {"tracks": [ids]} appends tracks not already in it.
+// addToPlaylist: POST {"tracks": [ids], "at"?: n} adds tracks not already in
+// it, at position n (a drop between two rows) or else at the end.
 func (s *Server) addToPlaylist(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Tracks []string `json:"tracks"`
+		At     *int     `json:"at"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
 	p, err := s.st.UpdatePlaylist(r.PathValue("id"), func(p *state.Playlist) {
+		var add []string
 		for _, id := range body.Tracks {
-			if _, ok := s.lib.Get(id); ok && !containsStr(p.Tracks, id) {
-				p.Tracks = append(p.Tracks, id)
+			if _, ok := s.lib.Get(id); ok && !containsStr(p.Tracks, id) && !containsStr(add, id) {
+				add = append(add, id)
 			}
 		}
+		at := len(p.Tracks)
+		if body.At != nil {
+			at = min(max(*body.At, 0), at)
+		}
+		p.Tracks = append(p.Tracks[:at:at], append(add, p.Tracks[at:]...)...)
 	})
 	if err != nil {
 		notFoundOr(w, r, err)
