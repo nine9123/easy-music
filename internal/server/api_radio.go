@@ -158,7 +158,12 @@ func (s *Server) streamStation(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		writeError(w, r, http.StatusBadGateway, "station answered "+resp.Status)
+		msg := "station answered " + resp.Status
+		// SHOUTcast explains itself here, e.g. when no source is connected.
+		if n := strings.TrimSuffix(resp.Header.Get("Icy-Notice2"), "<BR>"); n != "" {
+			msg += ": " + n
+		}
+		writeError(w, r, http.StatusBadGateway, msg)
 		return
 	}
 	ct := resp.Header.Get("Content-Type")

@@ -21,6 +21,7 @@ import (
 	"github.com/nine9123/easy-music/internal/hotcache"
 	"github.com/nine9123/easy-music/internal/library"
 	"github.com/nine9123/easy-music/internal/mix"
+	"github.com/nine9123/easy-music/internal/radio"
 	"github.com/nine9123/easy-music/internal/state"
 	"github.com/nine9123/easy-music/internal/youtube"
 )
@@ -52,10 +53,11 @@ type Server struct {
 func New(lib *library.Library, st *state.Store, cv *covers.Covers, hot *hotcache.Cache, yt *youtube.Importer) *Server {
 	s := &Server{lib: lib, st: st, covers: cv, hot: hot, yt: yt, mux: http.NewServeMux()}
 	// Streams are endless: no overall timeout, but give up on a station that
-	// doesn't answer.
+	// doesn't answer. SHOUTcast servers reply "ICY 200 OK", which net/http
+	// rejects unless the status line is rewritten.
 	s.radio = &http.Client{Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		DialContext:           radio.DialICY((&net.Dialer{Timeout: 10 * time.Second}).DialContext),
 		ResponseHeaderTimeout: 15 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 	}}

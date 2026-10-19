@@ -301,6 +301,9 @@ func TestRadio(t *testing.T) {
 		switch r.URL.Path {
 		case "/listen.pls":
 			fmt.Fprintf(w, "[playlist]\nFile1=http://%s/live\nTitle1=Test FM\n", r.Host)
+		case "/offline":
+			w.Header().Set("Icy-Notice2", "The resource requested is currently unavailable<BR>")
+			w.WriteHeader(http.StatusUnauthorized)
 		case "/live":
 			w.Header().Set("Content-Type", "audio/mpeg")
 			w.Header().Set("Icy-Name", "Test FM")
@@ -348,6 +351,13 @@ func TestRadio(t *testing.T) {
 	e.do("GET", "/api/stations", nil, &all)
 	if all[0].ID != added[0].ID || !all[0].Favorite || all[0].Plays != 1 {
 		t.Errorf("favorite station first: %+v", all)
+	}
+	var off []state.Station
+	e.do("POST", "/api/stations", map[string]string{"url": upstream.URL + "/offline"}, &off)
+	var perr struct{ Error string }
+	if r := e.do("GET", "/api/stations/"+off[0].ID+"/stream", nil, &perr); r.StatusCode != 502 ||
+		!strings.HasSuffix(perr.Error, ": The resource requested is currently unavailable") {
+		t.Errorf("offline station: %d %q", r.StatusCode, perr.Error)
 	}
 	if r := e.do("POST", "/api/stations", map[string]string{"url": "ftp://x"}, nil); r.StatusCode != 400 {
 		t.Errorf("bad URL accepted: %d", r.StatusCode)

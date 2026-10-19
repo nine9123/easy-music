@@ -141,8 +141,22 @@ for (const el of [audio, video]) {
   el.addEventListener('loadedmetadata', () => { if (el === media) updateSeek(); });
   el.addEventListener('error', () => {
     if (el !== media || !el.getAttribute('src')) return;
-    toast(P.station ? 'Station unavailable' : 'Cannot play this file');
+    if (P.station) stationFailed(P.station);
+    else toast('Cannot play this file');
   });
+}
+
+// The browser only says the source is "not suitable"; ask the relay why.
+async function stationFailed(st) {
+  let why = 'the stream format is not supported by this browser';
+  if (!/\.m3u8(\?|$)/i.test(st.url)) {
+    try {
+      const r = await fetch(`/api/stations/${st.id}/stream`);
+      if (!r.ok) why = (await r.json().catch(() => ({}))).error || r.statusText;
+      else r.body.cancel();
+    } catch (e) { why = e.message; }
+  }
+  if (P.station === st) toast(`⚠ Station unavailable: ${why}`);
 }
 
 // Count the listen (or the skip) of the track we are leaving.
@@ -309,7 +323,8 @@ async function playStation(st) {
   P.station = st;
   // HLS can't be relayed byte-for-byte; let the browser fetch it directly.
   audio.src = /\.m3u8(\?|$)/i.test(st.url) ? st.url : `/api/stations/${st.id}/stream`;
-  audio.play().catch(fail);
+  // A source that can't play is reported by the 'error' listener.
+  audio.play().catch(e => { if (e.name !== 'NotSupportedError' && e.name !== 'AbortError') fail(e); });
   api.post(`/api/stations/${st.id}/played`).catch(() => {});
   updateNow();
   markPlaying();
