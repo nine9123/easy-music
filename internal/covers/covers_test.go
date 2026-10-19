@@ -3,6 +3,8 @@ package covers
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -139,5 +141,25 @@ func TestDownscale(t *testing.T) {
 	}
 	if r, _, _, _ := out.At(0, 0).RGBA(); r>>8 != 30 {
 		t.Errorf("box filter average = %d, want 30", r>>8)
+	}
+}
+
+// A tiny PNG that declares 20000x20000 must not be decoded (1.6 GB as RGBA).
+func TestStoreSkipsHugeImages(t *testing.T) {
+	b := pngBytes(1, 1)
+	// IHDR: length(4) "IHDR"(4) width(4) height(4) ... crc after 13 bytes.
+	binary.BigEndian.PutUint32(b[16:], 20000)
+	binary.BigEndian.PutUint32(b[20:], 20000)
+	binary.BigEndian.PutUint32(b[29:], crc32.ChecksumIEEE(b[12:29]))
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(b)); err != nil || cfg.Width != 20000 {
+		t.Fatalf("test image: %v %v", cfg, err)
+	}
+	c := &Covers{dir: t.TempDir()}
+	if err := c.store("k", b); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(c.dir, "k.jpg"))
+	if err != nil || !bytes.Equal(got, b) {
+		t.Errorf("stored %d bytes, want the original %d", len(got), len(b))
 	}
 }

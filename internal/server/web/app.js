@@ -117,7 +117,7 @@ const P = {
   history: [],    // ids played this session, for the mixer's variety rules
   listened: 0,    // seconds actually heard of the current track
   lastPos: null,
-  refilling: false,
+  refilling: null,
 };
 let media = audio;
 
@@ -236,16 +236,21 @@ function togglePlay() {
 }
 
 // Radio/shuffle: top the queue up from the server's mixer when it runs low.
-async function refill() {
-  if (!P.mode || P.refilling || P.station) return;
-  if (P.queue.length - P.idx - 1 >= 3) return;
-  P.refilling = true;
-  try {
-    const recent = [...new Set([...P.history.slice(-60), ...P.queue.slice(Math.max(0, P.idx - 30)).map(t => t.id)])];
-    const picks = await api.post('/api/mix', { seed: P.mode === 'radio' ? P.seed : '', recent, count: 5 });
-    P.queue.push(...picks.filter(p => !P.queue.some(q => q.id === p.id)));
-    renderQueue();
-  } catch (e) { fail(e); } finally { P.refilling = false; }
+// A refill already in flight is shared, so advance() waiting on it still
+// gets the new tracks instead of stopping.
+function refill() {
+  if (!P.mode || P.station) return Promise.resolve();
+  if (P.refilling) return P.refilling;
+  if (P.queue.length - P.idx - 1 >= 3) return Promise.resolve();
+  P.refilling = (async () => {
+    try {
+      const recent = [...new Set([...P.history.slice(-60), ...P.queue.slice(Math.max(0, P.idx - 30)).map(t => t.id)])];
+      const picks = await api.post('/api/mix', { seed: P.mode === 'radio' ? P.seed : '', recent, count: 5 });
+      P.queue.push(...picks.filter(p => !P.queue.some(q => q.id === p.id)));
+      renderQueue();
+    } catch (e) { fail(e); } finally { P.refilling = null; }
+  })();
+  return P.refilling;
 }
 
 function setMode(mode, seedTrack) {
@@ -509,7 +514,7 @@ function trackTable(tracks, { sort, order, onSort, playlist } = {}) {
       playlist && ['Remove from playlist', () => playlist.remove(i)],
       playlist && i > 0 && ['Move up', () => playlist.move(i, -1)],
       playlist && i < tracks.length - 1 && ['Move down', () => playlist.move(i, 1)],
-      t.source && ['Open original page', () => window.open(t.source, '_blank', 'noopener')],
+      /^https?:\/\//i.test(t.source || '') && ['Open original page', () => window.open(t.source, '_blank', 'noopener')],
       ['Show album', () => { location.hash = `#/tracks?album=${t.albumId}&title=${encodeURIComponent(t.album || 'Album')}`; }],
     ];
     const playable = tracks.filter(x => !x.missing);
@@ -686,6 +691,14 @@ async function renderPlaylist(token, id) {
       } }, 'Delete')),
     importStatus.available ? importForm : null,
     pl.tracks.length ? trackTable(pl.tracks, { playlist: ctl }) : h('div', { class: 'empty' }, 'Empty. Add tracks with ⋯ → Add to playlist, or import a URL above.'));
+  // route() stops the poller, so a re-render after one import finishes has
+  // to pick the watch up again while more are on their way here.
+  if (importStatus.available) {
+    const res = await api.get('/api/downloads').catch(() => null);
+    if (token === viewToken && res && res.jobs.some(j => j.playlistId === id && (j.status === 'queued' || j.status === 'running'))) {
+      watchImports(token, () => route());
+    }
+  }
 }
 
 // ---------------------------------------------------------------- radio
@@ -738,9 +751,9 @@ function watchImports(token, onChange) {
     if (!res) return;
     const active = res.jobs.some(j => j.status === 'queued' || j.status === 'running');
     const done = res.jobs.filter(j => j.status === 'done' || j.status === 'failed').length;
+    if (!active) { clearInterval(poller); poller = null; onChange(res); return; }
     if (lastDone !== null && done !== lastDone) onChange(res);
     lastDone = done;
-    if (!active) { clearInterval(poller); poller = null; onChange(res); }
   }, 2000);
 }
 

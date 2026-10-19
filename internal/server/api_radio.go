@@ -29,6 +29,7 @@ func (s *Server) listStations(w http.ResponseWriter, r *http.Request) {
 func (s *Server) addStation(w http.ResponseWriter, r *http.Request) {
 	var entries []radio.Entry
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 		f, _, err := r.FormFile("file")
 		if err != nil {
 			writeError(w, r, http.StatusBadRequest, "expected a file field")

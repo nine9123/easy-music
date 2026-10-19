@@ -77,7 +77,7 @@ func New(in Input) *Mixer {
 	now := in.Now.Unix()
 	for _, t := range in.Tracks {
 		g, w := genreTokens(t.Genre)
-		f := feat{t: t, genres: g, words: w, year: t.Year, artists: t.ArtistKeys(), album: t.AlbumKey()}
+		f := feat{t: t, genres: g, words: w, year: t.Year, artists: t.ArtistKeys(), album: mixAlbumKey(t)}
 		st := in.Stats[t.ID]
 		if _, ok := in.Favorites[t.ID]; ok {
 			f.bonus += 0.08
@@ -411,4 +411,14 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// mixAlbumKey is the album the album gap applies to. Untagged imports all sit
+// in one folder, so AlbumKey would make them a single "album" and the gap
+// would let only one of them play per AlbumGap picks; each is its own here.
+func mixAlbumKey(t *library.Track) string {
+	if t.Album == "" && t.Root == library.DownloadsRoot {
+		return "track:" + t.ID
+	}
+	return t.AlbumKey()
 }

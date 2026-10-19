@@ -32,7 +32,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   easy-music:
-    build: .   # or the image your registry builds from this repo
+    image: gitea.internal:30008/nine9/easy-music:latest   # built by .gitea/workflows/deploy.yml; or build: .
     container_name: easy-music     # idlegate needs a fixed name
     restart: unless-stopped        # NOT always: a sleeping app must stay asleep across reboots
     user: "1000:1000"              # owner of the directories below

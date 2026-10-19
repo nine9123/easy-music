@@ -88,10 +88,11 @@ func (im *Importer) kick() {
 // Cancel stops a running job (it is marked failed) or removes a queued or
 // finished one.
 func (im *Importer) Cancel(id string) error {
+	// Held across DeleteJob: Run picks a job and registers its cancel under
+	// the same lock, so a job is either still queued here or cancellable.
 	im.mu.Lock()
-	cancel := im.cancels[id]
-	im.mu.Unlock()
-	if cancel != nil {
+	defer im.mu.Unlock()
+	if cancel := im.cancels[id]; cancel != nil {
 		cancel()
 		return nil
 	}
@@ -114,7 +115,15 @@ func (im *Importer) Retry(id string) error {
 // next start — which, behind idlegate, is the next time anyone opens the app.
 func (im *Importer) Run(ctx context.Context) {
 	for {
+		im.mu.Lock()
 		job, ok := im.st.NextJob()
+		var jobCtx context.Context
+		var cancel context.CancelFunc
+		if ok {
+			jobCtx, cancel = context.WithCancel(ctx)
+			im.cancels[job.ID] = cancel
+		}
+		im.mu.Unlock()
 		if !ok {
 			select {
 			case <-ctx.Done():
@@ -123,7 +132,8 @@ func (im *Importer) Run(ctx context.Context) {
 				continue
 			}
 		}
-		im.run(ctx, job)
+		im.run(ctx, jobCtx, job)
+		cancel()
 		if ctx.Err() != nil {
 			return
 		}
@@ -132,12 +142,9 @@ func (im *Importer) Run(ctx context.Context) {
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-func (im *Importer) run(parent context.Context, job state.Job) {
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
-	im.mu.Lock()
-	im.cancels[job.ID] = cancel
-	im.mu.Unlock()
+// run does one job; ctx is parent plus the job's own cancel, which Run has
+// registered in im.cancels.
+func (im *Importer) run(parent, ctx context.Context, job state.Job) {
 	defer func() {
 		im.mu.Lock()
 		delete(im.cancels, job.ID)
@@ -150,21 +157,24 @@ func (im *Importer) run(parent context.Context, job state.Job) {
 
 	trackID, err := im.download(ctx, job, update)
 	switch {
+	case err == nil:
+		// Finished, even if a cancel or shutdown arrived at the last moment.
+		update(true, func(j *state.Job) { j.Status, j.Progress, j.TrackID = state.JobDone, 100, trackID })
 	case parent.Err() != nil:
 		update(true, func(j *state.Job) { j.Status = state.JobQueued })
 	case ctx.Err() != nil:
 		update(true, func(j *state.Job) { j.Status, j.Error = state.JobFailed, "canceled" })
-	case err != nil:
+	default:
 		log.Printf("import: %s: %v", job.URL, err)
 		update(true, func(j *state.Job) { j.Status, j.Error = state.JobFailed, err.Error() })
-	default:
-		update(true, func(j *state.Job) { j.Status, j.Progress, j.TrackID = state.JobDone, 100, trackID })
 	}
 }
 
 func (im *Importer) download(ctx context.Context, job state.Job, update func(bool, func(*state.Job))) (string, error) {
 	// Ask for the ID first: it names the files, and it fails fast on a bad URL.
-	out, err := im.cmd(ctx, "--no-playlist", "--skip-download", "--no-warnings", "--print", "%(id)s\t%(title)s", "--", job.URL).Output()
+	// --no-playlist only decides for a video inside a playlist; a playlist
+	// URL is still a playlist, and every entry would share this one name.
+	out, err := im.cmd(ctx, "--no-playlist", "--playlist-items", "1", "--skip-download", "--no-warnings", "--print", "%(id)s\t%(title)s", "--", job.URL).Output()
 	if err != nil {
 		return "", cmdError(err)
 	}
@@ -184,7 +194,7 @@ func (im *Importer) download(ctx context.Context, job state.Job, update func(boo
 	}
 
 	args := []string{
-		"--no-playlist", "--newline", "--no-mtime", "--no-warnings",
+		"--no-playlist", "--playlist-items", "1", "--newline", "--no-mtime", "--no-warnings",
 		// Best video up to 1080p, preferring H.264 + AAC so every browser can
 		// play it; merged into one mp4.
 		"-f", "bv*+ba/b", "-S", "res:1080,vcodec:h264,acodec:m4a", "--merge-output-format", "mp4",

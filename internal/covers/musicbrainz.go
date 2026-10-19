@@ -103,7 +103,12 @@ func (m *musicBrainz) get(ctx context.Context, u string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET %s: %s", u, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	const limit = 16 << 20
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err == nil && len(b) > limit {
+		return nil, fmt.Errorf("GET %s: response over %d bytes", u, limit)
+	}
+	return b, err
 }
 
 func luceneEscape(s string) string {

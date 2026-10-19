@@ -68,6 +68,12 @@ func Open(dir string, max int64, minPlays int, score func(id string) float64) (*
 		if !ok {
 			continue
 		}
+		if _, dup := c.entries[id]; dup {
+			// A stop between copying a newer version and removing the old
+			// one leaves two; keep one, or the other is counted forever.
+			os.Remove(filepath.Join(dir, name))
+			continue
+		}
 		c.entries[id] = entry{file: name, size: size, modTime: mtime}
 		c.used += size
 	}
@@ -80,7 +86,7 @@ func fileName(s Source) string {
 
 func parseName(name string) (id string, size, mtime int64, ok bool) {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
-	parts := strings.Split(base, "-")
+	parts := strings.SplitN(base, "-", 3) // the mtime can be negative
 	if len(parts) != 3 {
 		return "", 0, 0, false
 	}

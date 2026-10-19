@@ -136,7 +136,8 @@ music video, survives an index rebuild, and gets its artist/title from the
 video's metadata ("Artist - Title (Official Video)" is cleaned up). Imports run
 one at a time from a queue that is saved in `/config`. A failed import can be
 retried. yt-dlp needs regular updates to keep working with YouTube: rebuild the
-image to get the latest release.
+image to get the latest release (on Gitea, run the "Build and deploy" workflow
+by hand; it also runs on every push to `main`).
 
 ## Running behind idlegate
 

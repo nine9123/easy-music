@@ -88,3 +88,24 @@ func TestDisabled(t *testing.T) {
 		t.Errorf("disabled cache queued work")
 	}
 }
+
+func TestOpenParsesNamesAndDropsDuplicates(t *testing.T) {
+	ssd := t.TempDir()
+	for _, name := range []string{"abc-100--5.mp3", "dup-10-1.mp3", "dup-20-2.mp3"} {
+		os.WriteFile(filepath.Join(ssd, name), nil, 0o644)
+	}
+	c, err := Open(ssd, 1000, 1, func(string) float64 { return 0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Lookup("abc", 100, -5); !ok {
+		t.Error("a copy with a pre-1970 mtime was not indexed")
+	}
+	used, _, n := c.Usage()
+	if n != 2 || (used != 110 && used != 120) {
+		t.Errorf("used %d bytes in %d entries, want one copy of dup counted", used, n)
+	}
+	if des, _ := os.ReadDir(ssd); len(des) != 2 {
+		t.Errorf("%d files left, want the duplicate removed", len(des))
+	}
+}

@@ -30,6 +30,9 @@ import (
 // MaxSize is the longest edge of a cached cover.
 const MaxSize = 600
 
+// maxDecodePixels caps the images store decodes (about 100 MB as RGBA).
+const maxDecodePixels = 25_000_000
+
 // retryAfter is how long a remote miss is remembered.
 const retryAfter = 30 * 24 * time.Hour
 
@@ -118,6 +121,11 @@ func (c *Covers) local(t *library.Track) []byte {
 // standard library can't decode (WebP) are stored as they are; browsers
 // sniff the type.
 func (c *Covers) store(k string, data []byte) error {
+	// A small file can declare a huge image; decoding it would take memory
+	// in proportion to the pixels, so those are stored as they are too.
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err != nil || cfg.Width*cfg.Height > maxDecodePixels {
+		return library.WriteFileAtomic(filepath.Join(c.dir, k+".jpg"), data)
+	}
 	if img, _, err := image.Decode(bytes.NewReader(data)); err == nil {
 		var buf bytes.Buffer
 		if err := jpeg.Encode(&buf, downscale(img, MaxSize), &jpeg.Options{Quality: 85}); err == nil {
@@ -157,7 +165,9 @@ func (c *Covers) Run(ctx context.Context) {
 			}
 			c.mu.Lock()
 			delete(c.queued, k)
-			if data == nil {
+			// Only a clean "not found" is a miss: a timeout or 503 is retried
+			// the next time the album is shown, not in 30 days.
+			if data == nil && err == nil {
 				c.misses[k] = time.Now().Unix()
 			}
 			b, _ := json.Marshal(c.misses)

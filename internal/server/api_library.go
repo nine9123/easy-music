@@ -99,7 +99,16 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
+	// Scans run one at a time. One running and one waiting covers every
+	// change made before this click; more would only queue extra full
+	// passes over the HDD.
+	if s.rescans.Add(1) > 2 {
+		s.rescans.Add(-1)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	go func() {
+		defer s.rescans.Add(-1)
 		if err := s.lib.Scan(context.Background()); err != nil {
 			log.Printf("scan: %v", err)
 		}
@@ -238,10 +247,18 @@ func (s *Server) streamTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, cached := s.hot.Lookup(t.ID, t.Size, t.ModTime)
-	if !cached {
-		p, _ = s.lib.Abs(t.Root, t.Path)
+	if cached {
+		// The hot cache can evict the copy between Lookup and here; once
+		// open, it stays readable, so only a failed open falls back.
+		if f, err := os.Open(p); err == nil {
+			defer f.Close()
+			w.Header().Set("X-Hot-Cache", "true")
+			serveOpened(w, r, f, path.Base(t.Path))
+			return
+		}
 	}
-	w.Header().Set("X-Hot-Cache", strconv.FormatBool(cached))
+	p, _ = s.lib.Abs(t.Root, t.Path)
+	w.Header().Set("X-Hot-Cache", "false")
 	serveFile(w, r, p, path.Base(t.Path))
 }
 
@@ -268,6 +285,10 @@ func serveFile(w http.ResponseWriter, r *http.Request, p, name string) {
 		return
 	}
 	defer f.Close()
+	serveOpened(w, r, f, name)
+}
+
+func serveOpened(w http.ResponseWriter, r *http.Request, f *os.File, name string) {
 	st, err := f.Stat()
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, err.Error())
@@ -307,6 +328,13 @@ func (s *Server) played(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 && !readJSON(w, r, &body) {
 		return
 	}
+	// Listening time comes from the client: keep a bad value from
+	// corrupting the totals for good.
+	limit := 6 * time.Hour.Seconds()
+	if t.Duration > 0 {
+		limit = t.Duration + 60
+	}
+	body.Seconds = min(max(body.Seconds, 0), limit)
 	st := s.st.RecordPlay(t.ID, body.Seconds)
 	s.considerHot(t, st.Plays)
 	writeJSON(w, r, http.StatusOK, st)

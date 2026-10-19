@@ -221,6 +221,19 @@ func TestLibraryAPI(t *testing.T) {
 			t.Errorf("mix returned the seed")
 		}
 	}
+
+	// Listening time comes from the client and is clamped to the track.
+	var ps struct {
+		Seconds float64 `json:"seconds"`
+	}
+	e.do("POST", "/api/tracks/"+song.ID+"/played", map[string]float64{"seconds": -1e308}, &ps)
+	if ps.Seconds != 6 {
+		t.Errorf("negative seconds: total %v, want 6", ps.Seconds)
+	}
+	e.do("POST", "/api/tracks/"+song.ID+"/played", map[string]float64{"seconds": 1e9}, &ps)
+	if ps.Seconds > 6+song.Duration+60 {
+		t.Errorf("huge seconds: total %v", ps.Seconds)
+	}
 }
 
 func TestPlaylistsAndImport(t *testing.T) {

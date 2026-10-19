@@ -105,6 +105,10 @@ type Store struct {
 	saveMu   sync.Mutex
 	timer    *time.Timer
 	debounce time.Duration
+
+	// writeMu orders whole saves: the snapshot taken last is renamed last, so
+	// a debounced save still running when Close saves can't land on top.
+	writeMu sync.Mutex
 }
 
 // Open loads state.json from dir, or starts empty.
@@ -165,6 +169,8 @@ func (s *Store) changed() {
 
 // Save writes the state now.
 func (s *Store) Save() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.RLock()
 	b, err := json.Marshal(&s.d)
 	s.mu.RUnlock()

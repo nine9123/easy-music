@@ -1,6 +1,7 @@
 package tags
 
 import (
+	"bytes"
 	"math"
 	"path/filepath"
 	"testing"
@@ -70,5 +71,30 @@ func TestHelpers(t *testing.T) {
 	}
 	if got := unsync([]byte{0xFF, 0x00, 0xE0, 0x01}); string(got) != "\xFF\xE0\x01" {
 		t.Errorf("unsync = %x", got)
+	}
+}
+
+// A grouped frame carries a group id byte before its text; it is not the
+// text encoding.
+func TestID3GroupedFrame(t *testing.T) {
+	for _, tt := range []struct {
+		ver   byte
+		flags uint16
+	}{{3, 0x0020}, {4, 0x0040}} {
+		body := []byte{0x07, 0x03} // group 7, UTF-8
+		body = append(body, "Grouped"...)
+		frame := []byte("TIT2")
+		frame = append(frame, 0, 0, 0, byte(len(body)), byte(tt.flags>>8), byte(tt.flags))
+		frame = append(frame, body...)
+		tag := []byte{'I', 'D', '3', tt.ver, 0, 0, 0, 0, 0, byte(len(frame))}
+		tag = append(tag, frame...)
+		var in Info
+		var pic *Picture
+		if _, err := readID3v2(bytes.NewReader(tag), &in, false, &pic); err != nil {
+			t.Fatal(err)
+		}
+		if in.Title != "Grouped" {
+			t.Errorf("v2.%d: title %q", tt.ver, in.Title)
+		}
 	}
 }

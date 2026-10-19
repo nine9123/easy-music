@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log"
 	"os"
@@ -64,6 +65,7 @@ func (l *Library) ScanRoots(ctx context.Context, names ...string) error {
 			}
 			continue
 		}
+		before := len(found)
 		err := walkRoot(ctx, root, func(dir string, entries []fs.DirEntry) {
 			for _, t := range l.scanDir(root, dir, entries, old, firstScan) {
 				found = append(found, t)
@@ -74,6 +76,11 @@ func (l *Library) ScanRoots(ctx context.Context, names ...string) error {
 				l.checkpoint(old, found)
 			}
 		})
+		if err == nil && len(found) == before && dirEmpty(root.Dir) && hasRoot(old, root.Name) {
+			// An unmounted disk usually leaves its mount point behind as an
+			// empty directory: treat it like an unreadable root.
+			err = errors.New("directory is empty")
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				l.checkpoint(old, found)
@@ -138,6 +145,20 @@ func dedupeIDs(ts []*Track) []*Track {
 		seen[ts[i].ID] = true
 	}
 	return ts
+}
+
+func dirEmpty(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) == 0
+}
+
+func hasRoot(tracks map[string]*Track, root string) bool {
+	for _, t := range tracks {
+		if t.Root == root {
+			return true
+		}
+	}
+	return false
 }
 
 // walkRoot calls fn once per directory with its entries.

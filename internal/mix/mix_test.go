@@ -213,3 +213,31 @@ func BenchmarkNext50k(b *testing.B) {
 		}
 	})
 }
+
+// Untagged imports share a folder; they must not count as one album, or the
+// album gap would let only one import play every DefaultAlbumGap picks.
+func TestUntaggedImportsAreNotOneAlbum(t *testing.T) {
+	var lib []*library.Track
+	for n := 0; n < 30; n++ {
+		lib = append(lib, &library.Track{
+			ID:     fmt.Sprintf("yt%d", n),
+			Root:   library.DownloadsRoot,
+			Path:   fmt.Sprintf("youtube/yt%d.m4a", n),
+			Artist: fmt.Sprintf("Artist %d", n%10),
+		})
+	}
+	m := New(Input{Tracks: lib})
+	for run := int64(0); run < 20; run++ {
+		got := m.Next(Request{Count: 20, Rand: rand.New(rand.NewSource(run))})
+		if len(got) != 20 {
+			t.Fatalf("got %d tracks, want 20", len(got))
+		}
+		for i, tr := range got {
+			for j := max(0, i-DefaultArtistGap); j < i; j++ {
+				if got[j].Artist == tr.Artist {
+					t.Fatalf("run %d: %s repeated after %d tracks: the artist gap was given up", run, tr.Artist, i-j)
+				}
+			}
+		}
+	}
+}

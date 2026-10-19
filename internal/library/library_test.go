@@ -120,6 +120,25 @@ func TestUnreadableRootKeepsTracks(t *testing.T) {
 	}
 }
 
+func TestEmptyMountPointKeepsTracks(t *testing.T) {
+	music, cache := t.TempDir(), t.TempDir()
+	copyFixture(t, "v23.mp3", filepath.Join(music, "A", "a.mp3"))
+	roots := []Root{{Name: "m", Dir: music}}
+	lib, _ := Open(roots, cache)
+	lib.Scan(context.Background())
+	os.RemoveAll(filepath.Join(music, "A")) // unmounted: the mount point stays
+	lib.Scan(context.Background())
+	if len(lib.All()) != 1 {
+		t.Errorf("tracks of an empty mount point were dropped")
+	}
+	// Removing the music but not the folders is a real deletion.
+	os.MkdirAll(filepath.Join(music, "A"), 0o755)
+	lib.Scan(context.Background())
+	if len(lib.All()) != 0 {
+		t.Errorf("deleted tracks were kept")
+	}
+}
+
 func TestNewRoots(t *testing.T) {
 	got := NewRoots([]string{"/hdd/music", "/other/music", "/x/downloads"}, "/dl")
 	want := []Root{{"music", "/hdd/music"}, {"music-2", "/other/music"}, {"downloads-2", "/x/downloads"}, {DownloadsRoot, "/dl"}}

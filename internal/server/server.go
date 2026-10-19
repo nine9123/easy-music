@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nine9123/easy-music/internal/covers"
@@ -41,6 +42,8 @@ type Server struct {
 	mixLib   int64
 	mixState int64
 	mixAt    time.Time
+
+	rescans atomic.Int32 // rescan requests running or waiting for scanMu
 
 	mux *http.ServeMux
 }

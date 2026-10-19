@@ -54,6 +54,9 @@ func readID3v2(r io.ReadSeeker, in *Info, wantPic bool, pic **Picture) (int64, e
 	if flags&0x80 != 0 && ver < 4 {
 		data = unsync(data)
 	}
+	if flags&0x40 != 0 && ver == 2 {
+		return end, nil // v2.2 has no extended header: 0x40 is compression
+	}
 	if flags&0x40 != 0 && len(data) >= 4 {
 		// Extended header: v2.4 size includes itself and is synchsafe; v2.3
 		// excludes its own 4 size bytes.
@@ -92,6 +95,9 @@ func readID3v2(r io.ReadSeeker, in *Info, wantPic bool, pic **Picture) (int64, e
 		}
 		body := data[hdrLen : hdrLen+fsize]
 		data = data[hdrLen+fsize:]
+		if ver == 4 && fflags&0x0040 != 0 && len(body) >= 1 {
+			body = body[1:] // group id, ahead of the data length indicator
+		}
 		if ver == 4 && fflags&0x0002 != 0 {
 			body = unsync(body)
 		}
@@ -101,6 +107,9 @@ func readID3v2(r io.ReadSeeker, in *Info, wantPic bool, pic **Picture) (int64, e
 		// Compressed or encrypted frames: skip rather than misread.
 		if (ver == 3 && fflags&0x00C0 != 0) || (ver == 4 && fflags&0x000C != 0) {
 			continue
+		}
+		if ver == 3 && fflags&0x0020 != 0 && len(body) >= 1 {
+			body = body[1:] // group id
 		}
 		applyID3Frame(in, id, body, wantPic, pic)
 	}
