@@ -16,8 +16,9 @@ A small self-hosted music server for one person's library. A single Go binary
   a playlist.
 - **Radio mode**: "more like this" from any track, with variety enforced (see
   [below](#radio-mode)). Shuffle uses the same rules.
-- **Playlists**, **favorites**, **listening stats** (plays, skips, time
-  listened, top tracks/artists, history).
+- **Playlists** (drag tracks, albums, artists, imports or queue entries onto
+  one in the sidebar; drag rows to reorder), **favorites**, **listening
+  stats** (plays, skips, time listened, top tracks/artists, history).
 - **Internet radio**: add a stream URL, a link to a `.pls`/`.m3u`, or upload
   one.
 - **Covers**: `cover.jpg`/`folder.jpg`, embedded art, import thumbnails, and

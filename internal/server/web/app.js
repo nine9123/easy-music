@@ -402,12 +402,16 @@ setInterval(() => {
 function renderQueue() {
   if ($('#queue').hidden) return;
   const ol = $('#queue-list');
-  ol.replaceChildren(...P.queue.map((t, i) => h('li', {
-    class: i === P.idx && !P.station ? 'current' : i < P.idx ? 'played' : '',
-    onclick: () => jump(i),
-  },
-  h('div', { class: 't' }, h('div', { class: 'ellipsis' }, t.title), h('div', { class: 'ellipsis muted small' }, t.artist)),
-  i > P.idx ? h('button', { title: 'Remove', onclick: e => { e.stopPropagation(); P.queue.splice(i, 1); renderQueue(); } }, '✕') : null)));
+  ol.replaceChildren(...P.queue.map((t, i) => {
+    const li = h('li', {
+      class: i === P.idx && !P.station ? 'current' : i < P.idx ? 'played' : '',
+      onclick: () => jump(i),
+    },
+    h('div', { class: 't' }, h('div', { class: 'ellipsis' }, t.title), h('div', { class: 'ellipsis muted small' }, t.artist)),
+    i > P.idx ? h('button', { title: 'Remove', onclick: e => { e.stopPropagation(); P.queue.splice(i, 1); renderQueue(); } }, '✕') : null);
+    dragSource(li, () => ({ ...dragTracks([t]), from: { queue: true } }));
+    return li;
+  }));
   if (P.mode) ol.append(h('li', { class: 'muted small' }, P.mode === 'radio' ? 'Radio continues with similar music…' : 'Shuffle continues…'));
   const c = $('li.current', ol);
   if (c) c.scrollIntoView({ block: 'nearest' });
@@ -434,8 +438,23 @@ async function toggleFavorite(t) {
 let playlists = [];
 async function loadPlaylists() {
   playlists = await api.get('/api/playlists');
-  $('#playlists').replaceChildren(...playlists.map(p => h('a', { href: `#/playlist/${p.id}`, 'data-nav': true }, p.name)));
+  $('#playlists').replaceChildren(...playlists.map(p => {
+    const a = h('a', { href: `#/playlist/${p.id}`, 'data-nav': true, title: 'Drop tracks here to add them' }, p.name);
+    dropTarget(a, async d => addToPlaylist(p, await d.load()));
+    return a;
+  }));
   highlightNav();
+}
+
+async function addToPlaylist(p, tracks, at) {
+  if (!tracks.length) return null;
+  const sum = await api.post(`/api/playlists/${p.id}/tracks`, { tracks: tracks.map(t => t.id), at });
+  const added = sum.count - p.count;
+  toast(added ? `Added ${added > 1 ? added + ' tracks ' : ''}to “${p.name}”` : `Already in “${p.name}”`);
+  await loadPlaylists();
+  // The open playlist is the one that changed: show the new entries.
+  if (parseHash().parts[0] === 'playlist' && parseHash().parts[1] === p.id) route();
+  return sum;
 }
 
 async function newPlaylist(tracks = []) {
@@ -447,14 +466,87 @@ async function newPlaylist(tracks = []) {
   return p;
 }
 $('#new-playlist').onclick = () => newPlaylist().catch(fail);
+dropTarget($('#new-playlist'), async d => newPlaylist(await d.load()));
 
-function addToPlaylistMenu(ev, tracks) {
+// then runs after the tracks were added (Move to playlist removes them here).
+function addToPlaylistMenu(ev, tracks, { except, then } = {}) {
   menu(ev, [
-    ...playlists.map(p => [p.name, () => api.post(`/api/playlists/${p.id}/tracks`, { tracks: tracks.map(t => t.id) })
-      .then(() => { toast(`Added to “${p.name}”`); loadPlaylists(); }).catch(fail)]),
-    ['+ New playlist…', () => newPlaylist(tracks).catch(fail)],
+    ...playlists.filter(p => p.id !== except).map(p => [p.name, () => addToPlaylist(p, tracks).then(then).catch(fail)]),
+    ['+ New playlist…', () => newPlaylist(tracks).then(p => p && then && then()).catch(fail)],
   ]);
 }
+
+// ---------------------------------------------------------------- drag and drop
+//
+// Tracks, albums, artists and finished imports can be dragged onto a playlist
+// in the sidebar, the + (new playlist), the queue, or between the rows of the
+// open playlist. What is being dragged lives here rather than in
+// dataTransfer, which dragover handlers aren't allowed to read.
+
+const DRAG_TYPE = 'application/x-easy-music';
+// { load: async () => [tracks], from?: { playlist, index } }
+let dragged = null;
+
+function dragSource(el, get) {
+  el.draggable = true;
+  el.addEventListener('dragstart', e => {
+    dragged = get();
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData(DRAG_TYPE, '1');
+    e.dataTransfer.setData('text/plain', dragged.label || '');
+    document.body.classList.add('dragging');
+  });
+  el.addEventListener('dragend', endDrag);
+}
+
+function endDrag() {
+  dragged = null;
+  document.body.classList.remove('dragging');
+  document.querySelectorAll('.drop, .drop-before, .drop-after').forEach(el => el.classList.remove('drop', 'drop-before', 'drop-after'));
+}
+
+// Ours, not a file or a link dragged in from elsewhere.
+const isOurDrag = e => dragged && e.dataTransfer.types.includes(DRAG_TYPE);
+
+function dropTarget(el, onDrop) {
+  let depth = 0; // dragenter/leave also fire for every child crossed
+  el.addEventListener('dragenter', e => {
+    if (!isOurDrag(e)) return;
+    e.preventDefault();
+    depth++;
+    el.classList.add('drop');
+  });
+  el.addEventListener('dragover', e => {
+    if (!isOurDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  el.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; el.classList.remove('drop'); } });
+  el.addEventListener('drop', e => {
+    if (!isOurDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    depth = 0;
+    const d = dragged;
+    endDrag();
+    Promise.resolve(onDrop(d, e)).catch(fail);
+  });
+}
+
+const dragTracks = tracks => ({
+  load: async () => tracks,
+  label: tracks.map(t => [t.artist, t.title].filter(Boolean).join(' – ')).join('\n'),
+});
+// Album or artist: its tracks are only fetched if it is actually dropped.
+const dragQuery = (q, label) => ({ load: async () => (await api.get(`/api/tracks?${q}&limit=5000`)).tracks, label });
+
+dropTarget($('#queue'), async d => {
+  if (d.from && d.from.queue) return;
+  const ts = await d.load();
+  if (ts.length) enqueue(ts);
+});
+// The playing track, from the player bar.
+dragSource($('#player .now'), () => dragTracks(cur() && !P.station ? [cur()] : []));
 
 // ---------------------------------------------------------------- router
 
@@ -511,6 +603,7 @@ function trackTable(tracks, { sort, order, onSort, playlist } = {}) {
       ['Add to queue', () => enqueue([t])],
       ['Start radio from this track', () => startRadio(t)],
       ['Add to playlist…', () => setTimeout(() => addToPlaylistMenu(lastMenuEvent, [t]))],
+      playlist && ['Move to another playlist…', () => setTimeout(() => addToPlaylistMenu(lastMenuEvent, [t], { except: playlist.id, then: () => playlist.remove(i) }))],
       playlist && ['Remove from playlist', () => playlist.remove(i)],
       playlist && i > 0 && ['Move up', () => playlist.move(i, -1)],
       playlist && i < tracks.length - 1 && ['Move down', () => playlist.move(i, 1)],
@@ -518,7 +611,7 @@ function trackTable(tracks, { sort, order, onSort, playlist } = {}) {
       ['Show album', () => { location.hash = `#/tracks?album=${t.albumId}&title=${encodeURIComponent(t.album || 'Album')}`; }],
     ];
     const playable = tracks.filter(x => !x.missing);
-    return h('tr', {
+    const tr = h('tr', {
       'data-track': t.id, class: t.missing ? 'missing' : '',
       ondblclick: () => !t.missing && playList(playable, playable.indexOf(t)),
     },
@@ -536,6 +629,11 @@ function trackTable(tracks, { sort, order, onSort, playlist } = {}) {
         fav,
         h('button', { title: 'More', onclick: e => { lastMenuEvent = e; menu(e, actions); } }, '⋯'),
       ]));
+    // Missing entries can still be dragged within their playlist, just not
+    // added anywhere else.
+    if (!t.missing || playlist) dragSource(tr, () => ({ ...dragTracks(t.missing ? [] : [t]), from: playlist && { playlist: playlist.id, index: i } }));
+    if (playlist) rowDropTarget(tr, i, playlist);
+    return tr;
   });
   return h('table', { class: 'tracks' },
     h('thead', null, h('tr', null, th(null, '#', 'num'), th('title', 'Title'), th('artist', 'Artist'), th('album', 'Album', 'album'),
@@ -543,6 +641,35 @@ function trackTable(tracks, { sort, order, onSort, playlist } = {}) {
     h('tbody', null, rows));
 }
 let lastMenuEvent = null;
+
+// A playlist row: dropping on its top half inserts before it, on the bottom
+// half after it. Rows of the same playlist are moved, anything else added.
+function rowDropTarget(tr, i, playlist) {
+  const at = e => {
+    const r = tr.getBoundingClientRect();
+    return e.clientY < r.top + r.height / 2 ? i : i + 1;
+  };
+  tr.addEventListener('dragover', e => {
+    if (!isOurDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation(); // keep the playlist area's dropEffect from overriding 'move'
+    const before = at(e) === i;
+    e.dataTransfer.dropEffect = dragged.from && dragged.from.playlist === playlist.id ? 'move' : 'copy';
+    tr.classList.toggle('drop-before', before);
+    tr.classList.toggle('drop-after', !before);
+  });
+  tr.addEventListener('dragleave', e => {
+    if (!tr.contains(e.relatedTarget)) tr.classList.remove('drop-before', 'drop-after');
+  });
+  tr.addEventListener('drop', e => {
+    if (!isOurDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const d = dragged, to = at(e);
+    endDrag();
+    Promise.resolve(playlist.drop(d, to)).catch(fail);
+  });
+}
 
 function searchBox(value, onSearch) {
   let timer;
@@ -610,14 +737,16 @@ async function renderTracks(token, q) {
 
 // ---------------------------------------------------------------- albums / artists
 
-function card(coverTrack, name, sub, onclick, placeholder = '♪') {
+function card(coverTrack, name, sub, onclick, placeholder = '♪', drag) {
   const art = h('div', { class: 'art' }, placeholder);
   if (coverTrack) {
     const img = new Image();
     img.onload = () => { art.style.backgroundImage = `url("${img.src}")`; art.textContent = ''; };
     img.src = coverURL(coverTrack);
   }
-  return h('div', { class: 'card', onclick }, art, h('div', { class: 'name ellipsis', title: name }, name), h('div', { class: 'muted small ellipsis' }, sub));
+  const el = h('div', { class: 'card', onclick }, art, h('div', { class: 'name ellipsis', title: name }, name), h('div', { class: 'muted small ellipsis' }, sub));
+  if (drag) dragSource(el, () => drag);
+  return el;
 }
 
 async function renderAlbums(token, q) {
@@ -631,7 +760,7 @@ async function renderAlbums(token, q) {
     h('div', { class: 'toolbar' }, h('h1', null, 'Albums'), searchBox(q.get('q'), v => { setQuery(q, { q: v }); route(); }), sortSel,
       h('span', { class: 'muted' }, `${albums.length} albums`)),
     albums.length ? h('div', { class: 'grid' }, albums.map(a => card(a.coverTrack, a.album, [a.artist, a.year].filter(Boolean).join(' · '),
-      () => { location.hash = `#/tracks?album=${a.id}&title=${encodeURIComponent(a.album)}`; })))
+      () => { location.hash = `#/tracks?album=${a.id}&title=${encodeURIComponent(a.album)}`; }, undefined, dragQuery(`album=${a.id}`, a.album))))
       : h('div', { class: 'empty' }, 'No albums.'));
 }
 
@@ -644,7 +773,7 @@ async function renderArtists(token, q) {
     h('div', { class: 'toolbar' }, h('h1', null, 'Artists'), searchBox(q.get('q'), v => { setQuery(q, { q: v }); route(); }), sortSel,
       h('span', { class: 'muted' }, `${artists.length} artists`)),
     h('div', { class: 'grid' }, artists.map(a => card(a.coverTrack, a.name, `${a.tracks} tracks${a.plays ? ` · ${a.plays} plays` : ''}`,
-      () => { location.hash = `#/tracks?artist=${a.id}&title=${encodeURIComponent(a.name)}`; }, icon('person', 56)))));
+      () => { location.hash = `#/tracks?artist=${a.id}&title=${encodeURIComponent(a.name)}`; }, icon('person', 56), dragQuery(`artist=${a.id}`, a.name)))));
 }
 
 // ---------------------------------------------------------------- playlist
@@ -659,8 +788,20 @@ async function renderPlaylist(token, id) {
   };
   const ids = pl.tracks.map(t => t.id);
   const ctl = {
+    id,
     remove: i => { ids.splice(i, 1); save(ids).catch(fail); },
     move: (i, d) => { [ids[i], ids[i + d]] = [ids[i + d], ids[i]]; save(ids).catch(fail); },
+    // Something dropped at position `to` (0 = top, ids.length = bottom).
+    drop: async (d, to) => {
+      if (d.from && d.from.playlist === id) {
+        const [moved] = ids.splice(d.from.index, 1);
+        ids.splice(to > d.from.index ? to - 1 : to, 0, moved);
+        if (ids.some((x, k) => x !== pl.tracks[k].id)) await save(ids);
+        return;
+      }
+      const p = playlists.find(p => p.id === id);
+      if (p) await addToPlaylist(p, await d.load(), to);
+    },
   };
   const urlIn = h('input', { type: 'url', placeholder: 'Paste a YouTube URL to download it into this playlist (audio + video)' });
   const importForm = h('form', { class: 'panel-form', onsubmit: async e => {
@@ -673,6 +814,11 @@ async function renderPlaylist(token, id) {
     } catch (err) { fail(err); }
   } }, urlIn, h('button', { class: 'primary' }, 'Import'));
   const dur = pl.tracks.reduce((s, t) => s + (t.duration || 0), 0);
+  // Dropping below the last row (or on an empty playlist) adds at the end.
+  const dropZone = h('div', { class: 'playlist-drop' },
+    pl.tracks.length ? trackTable(pl.tracks, { playlist: ctl }) : h('div', { class: 'empty' }, 'Empty. Drag tracks here (or onto the playlist in the sidebar), use ⋯ → Add to playlist, or import a URL above.'),
+    pl.tracks.length ? h('div', { class: 'muted small drop-hint' }, 'Drag rows to reorder, or drop tracks here to add them.') : null);
+  dropTarget(dropZone, d => ctl.drop(d, ids.length));
   view.replaceChildren(
     h('div', { class: 'toolbar' },
       h('h1', null, pl.name),
@@ -690,7 +836,7 @@ async function renderPlaylist(token, id) {
         location.hash = '#/tracks';
       } }, 'Delete')),
     importStatus.available ? importForm : null,
-    pl.tracks.length ? trackTable(pl.tracks, { playlist: ctl }) : h('div', { class: 'empty' }, 'Empty. Add tracks with ⋯ → Add to playlist, or import a URL above.'));
+    dropZone);
   // route() stops the poller, so a re-render after one import finishes has
   // to pick the watch up again while more are on their way here.
   if (importStatus.available) {
@@ -764,16 +910,25 @@ async function renderImport(token) {
   const urlIn = h('input', { type: 'url', placeholder: 'https://www.youtube.com/watch?v=…', required: true });
   const plSel = h('select', null, h('option', { value: '' }, 'No playlist'), playlists.map(p => h('option', { value: p.id }, p.name)));
   const jobs = h('div', { class: 'list' });
-  const drawJobs = list => jobs.replaceChildren(...(list.length ? list.map(j => h('div', { class: 'row' },
+  const drawJobs = list => jobs.replaceChildren(...(list.length ? list.map(j => jobRow(j, h('div', { class: 'row' },
     h('div', { class: 't' },
       h('div', { class: 'ellipsis' }, j.title || j.url),
       h('div', { class: 'muted small ellipsis' }, j.url),
       j.error ? h('div', { class: 'small error' }, j.error) : null),
     j.status === 'running' ? h('progress', { max: 100, value: j.progress }) : h('span', { class: 'muted small' }, j.status),
     j.status === 'done' && j.trackId ? h('button', { onclick: async () => playList([await api.get(`/api/tracks/${j.trackId}`)]) }, 'Play') : null,
+    j.status === 'done' && j.trackId ? h('button', { onclick: e => addToPlaylistMenu(e, [{ id: j.trackId }]) }, '+ Playlist') : null,
     j.status === 'failed' ? h('button', { onclick: () => api.post(`/api/downloads/${j.id}/retry`).then(refresh).catch(fail) }, 'Retry') : null,
-    h('button', { title: j.status === 'running' ? 'Cancel' : 'Remove from list (files stay)', onclick: () => api.del(`/api/downloads/${j.id}`).then(refresh).catch(fail) }, '✕')))
+    h('button', { title: j.status === 'running' ? 'Cancel' : 'Remove from list (files stay)', onclick: () => api.del(`/api/downloads/${j.id}`).then(refresh).catch(fail) }, '✕'))))
     : [h('div', { class: 'empty' }, 'No imports yet.')]));
+  // A finished import is an ordinary track: drag it onto a playlist.
+  const jobRow = (j, row) => {
+    if (j.status === 'done' && j.trackId) {
+      row.title = 'Drag onto a playlist to add it there';
+      dragSource(row, () => ({ load: async () => [await api.get(`/api/tracks/${j.trackId}`)], label: j.title || j.url }));
+    }
+    return row;
+  };
   const refresh = async () => {
     const r = await api.get('/api/downloads');
     drawJobs(r.jobs);
@@ -792,7 +947,7 @@ async function renderImport(token) {
     }, 1500);
   };
   view.replaceChildren(
-    h('div', { class: 'toolbar' }, h('h1', null, 'Import from URL')),
+    h('div', { class: 'toolbar' }, h('h1', null, 'Import from URL'), h('a', { class: 'muted', href: '#/tracks?filter=imported' }, 'All imported tracks →')),
     res.available ? h('form', { class: 'panel-form', onsubmit: async e => {
       e.preventDefault();
       try {

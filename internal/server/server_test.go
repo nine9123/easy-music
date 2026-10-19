@@ -250,6 +250,22 @@ func TestPlaylistsAndImport(t *testing.T) {
 	}
 	e.do("PATCH", "/api/playlists/"+pl.ID, map[string]any{"name": "Renamed", "tracks": []string{tune.ID, song.ID}}, &pl)
 
+	// Dropping a track between two rows inserts it there.
+	var other playlistSummary
+	e.do("POST", "/api/playlists", map[string]any{"name": "Other", "tracks": []string{song.ID}}, &other)
+	e.do("POST", "/api/playlists/"+other.ID+"/tracks", map[string]any{"tracks": []string{tune.ID, tune.ID}, "at": 0}, &other)
+	var otherFull struct {
+		Tracks []trackView `json:"tracks"`
+	}
+	e.do("GET", "/api/playlists/"+other.ID, nil, &otherFull)
+	if len(otherFull.Tracks) != 2 || otherFull.Tracks[0].ID != tune.ID || otherFull.Tracks[1].ID != song.ID {
+		t.Errorf("insert at 0: %+v", otherFull.Tracks)
+	}
+	e.do("POST", "/api/playlists/"+other.ID+"/tracks", map[string]any{"tracks": []string{song.ID}, "at": 99}, &other)
+	if other.Count != 2 {
+		t.Errorf("insert should still skip duplicates: %+v", other)
+	}
+
 	// Import a video straight into the playlist.
 	var job state.Job
 	if r := e.do("POST", "/api/downloads", map[string]any{"url": "https://www.youtube.com/watch?v=vid123", "playlistId": pl.ID}, &job); r.StatusCode != 202 {
