@@ -1,0 +1,46 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: gitea.internal:30008
+  IMAGE_NAME: nine9/easy-music
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Gitea registry
+        run: |
+          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login ${{ env.REGISTRY }} \
+            -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+
+      - name: Test
+        run: |
+          # Run the tests in the Dockerfile's build stage, so they use the same
+          # Go toolchain as the binary and the runner needs nothing but docker.
+          # A failure here stops the push: :latest stays on the last good build.
+          docker build --target build -t easy-music-test:${{ gitea.sha }} .
+          docker run --rm easy-music-test:${{ gitea.sha }} go test ./...
+          docker rmi easy-music-test:${{ gitea.sha }}
+
+      - name: Build image
+        run: |
+          SHA_SHORT=$(echo "${{ gitea.sha }}" | cut -c1-8)
+          docker build \
+            --label "org.opencontainers.image.revision=${{ gitea.sha }}" \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_SHORT} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            .
+          echo "SHA_SHORT=${SHA_SHORT}" >> "$GITEA_ENV"
+
+      - name: Push image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.SHA_SHORT }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

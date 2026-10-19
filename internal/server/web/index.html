@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>easy-music</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>♪</text></svg>">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <nav id="sidebar">
+    <div class="brand">♪ easy-music</div>
+    <a href="#/tracks" data-nav>Tracks</a>
+    <a href="#/albums" data-nav>Albums</a>
+    <a href="#/artists" data-nav>Artists</a>
+    <a href="#/tracks?filter=favorites" data-nav>Favorites</a>
+    <a href="#/tracks?filter=video" data-nav>Music videos</a>
+    <a href="#/tracks?sort=added&amp;order=desc" data-nav>Recently added</a>
+    <a href="#/tracks?sort=plays&amp;order=desc" data-nav>Most played</a>
+    <a href="#/stats" data-nav>Stats</a>
+    <a href="#/radio" data-nav>Radio</a>
+    <a href="#/import" data-nav id="nav-import">Import from URL</a>
+    <div class="section">Playlists <button id="new-playlist" title="New playlist">+</button></div>
+    <div id="playlists"></div>
+    <div class="grow"></div>
+    <div id="scan-status" class="muted small"></div>
+  </nav>
+
+  <main id="main">
+    <section id="stage" hidden>
+      <div id="stage-video"></div>
+      <div class="stage-bar">
+        <button id="stage-full" data-icon="fullscreen" title="Fullscreen"></button>
+        <button id="stage-hide" title="Hide video (keep listening)">✕</button>
+      </div>
+    </section>
+    <div id="view"></div>
+  </main>
+
+  <aside id="queue" hidden>
+    <div class="queue-head"><b>Queue</b> <button id="queue-clear">Clear</button> <button id="queue-close">✕</button></div>
+    <ol id="queue-list"></ol>
+  </aside>
+
+  <footer id="player">
+    <div class="now">
+      <img id="now-cover" alt="">
+      <div class="now-text">
+        <div id="now-title" class="ellipsis">Nothing playing</div>
+        <div id="now-artist" class="ellipsis muted"></div>
+      </div>
+      <button id="now-fav" class="icon" title="Favorite">♡</button>
+    </div>
+    <div class="controls">
+      <div class="buttons">
+        <button id="btn-shuffle" class="icon" data-icon="shuffle" title="Shuffle the library (with variety)"></button>
+        <button id="btn-prev" class="icon" data-icon="prev" title="Previous"></button>
+        <button id="btn-play" class="icon big" data-icon="play" title="Play/Pause"></button>
+        <button id="btn-next" class="icon" data-icon="next" title="Next"></button>
+        <button id="btn-radio" class="icon" data-icon="radio" title="Radio mode: keep playing similar music from here"></button>
+      </div>
+      <div class="seek">
+        <span id="time-cur" class="small muted">0:00</span>
+        <input id="seek" type="range" min="0" max="1000" value="0">
+        <span id="time-dur" class="small muted">0:00</span>
+      </div>
+    </div>
+    <div class="extra">
+      <button id="btn-video" class="icon" data-icon="video" title="Show music video" disabled></button>
+      <button id="btn-queue" class="icon" data-icon="queue" title="Queue"></button>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="1" title="Volume">
+    </div>
+  </footer>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+<script src="app.js"></script>
+</body>
+</html>

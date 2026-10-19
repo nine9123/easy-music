@@ -1,0 +1,30 @@
+#!/bin/sh
+# Stand-in for yt-dlp in tests. Understands only the arguments the importer
+# passes: a probe (--skip-download --print ...) and a download (-o TEMPLATE).
+probe=""; out=""; url=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--skip-download) probe=1 ;;
+	-o) out="$2"; shift ;;
+	--) url="$2"; shift ;;
+	esac
+	shift
+done
+case "$url" in
+*fail*) echo "ERROR: [youtube] fail: Video unavailable" >&2; exit 1 ;;
+esac
+if [ -n "$probe" ]; then
+	printf 'vid123\tArtist - Song (Official Video)\n'
+	exit 0
+fi
+case "$url" in
+*slow*) exec sleep 30 ;;
+esac
+base="${out%.%(ext)s}"
+echo "[download]  50.0% of 1.00MiB"
+echo "[download] 100.0% of 1.00MiB"
+echo "[download]  10.0% of 1.00MiB"
+echo "[download] 100.0% of 1.00MiB"
+printf 'video' > "$base.mp4"
+printf 'audio' > "$base.m4a"
+printf '{"title":"Artist - Song (Official Video)","webpage_url":"%s"}' "$url" > "$base.info.json"
