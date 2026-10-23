@@ -45,6 +45,8 @@ type Server struct {
 
 	rescans atomic.Int32 // rescan requests running or waiting for scanMu
 
+	authUser, authPass []byte // SHA-256 digests; nil: no password (see SetAuth)
+
 	mux *http.ServeMux
 }
 
@@ -64,7 +66,7 @@ func New(lib *library.Library, st *state.Store, cv *covers.Covers, hot *hotcache
 }
 
 // Handler returns the root handler.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler { return s.secure(s.mux) }
 
 func (s *Server) routes() {
 	m := s.mux

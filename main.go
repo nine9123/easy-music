@@ -80,6 +80,12 @@ func run() error {
 		}
 	}
 	srv = server.New(lib, st, cv, hot, yt)
+	if cfg.AuthPassword != "" {
+		srv.SetAuth(cfg.AuthUser, cfg.AuthPassword)
+		log.Printf("easy-music: password required (user %q)", cfg.AuthUser)
+	} else {
+		log.Printf("easy-music: no AUTH_PASSWORD, anyone who can reach %s can use it", cfg.Listen)
+	}
 
 	// Listen as soon as the cached index is loaded: the UI is usable at once
 	// and idlegate's wake completes, while the rescan runs in the background.

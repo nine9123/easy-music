@@ -44,6 +44,10 @@ services:
       # SCAN_ON_START: "true"      # rescan on every wake; "false" leaves the HDD alone until you press Rescan
       # SCAN_INTERVAL: "0"         # e.g. "6h"; only runs while the container is awake
       # MUSIC_DIRS: "/music,/music2"
+      # Login (HTTP Basic auth, 12+ characters). Without it, anyone who can
+      # reach port 8080 can use it. Use HTTPS in front if it leaves your LAN.
+      # AUTH_PASSWORD_FILE: "/config/password"   # or AUTH_PASSWORD: "..."
+      # AUTH_USER: "admin"
     volumes:
       - /mnt/hdd/music:/music:ro
       - /mnt/hdd/music-imports:/downloads

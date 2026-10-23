@@ -383,3 +383,99 @@ func TestGzipJSON(t *testing.T) {
 		t.Errorf("large JSON not compressed")
 	}
 }
+
+func TestAuth(t *testing.T) {
+	e := newEnv(t)
+	e.srv.SetAuth("me", "correct horse battery")
+	ts := httptest.NewServer(e.srv.Handler())
+	defer ts.Close()
+
+	get := func(path, user, pass string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest("GET", ts.URL+path, nil)
+		if user != "" || pass != "" {
+			req.SetBasicAuth(user, pass)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	if r := get("/healthz", "", ""); r.StatusCode != 200 {
+		t.Errorf("healthz without password: %d", r.StatusCode)
+	}
+	for _, path := range []string{"/", "/app.js", "/api/tracks", "/api/tracks/x/stream"} {
+		r := get(path, "", "")
+		if r.StatusCode != 401 || !strings.HasPrefix(r.Header.Get("WWW-Authenticate"), "Basic ") {
+			t.Errorf("%s without password: %d %q", path, r.StatusCode, r.Header.Get("WWW-Authenticate"))
+		}
+	}
+	for _, c := range [][2]string{{"me", "wrong"}, {"you", "correct horse battery"}, {"me", "correct horse batter"}} {
+		if r := get("/api/tracks", c[0], c[1]); r.StatusCode != 401 {
+			t.Errorf("%q:%q: %d", c[0], c[1], r.StatusCode)
+		}
+	}
+	if r := get("/api/tracks", "me", "correct horse battery"); r.StatusCode != 200 {
+		t.Errorf("right password: %d", r.StatusCode)
+	}
+
+	e.srv.SetAuth("", "")
+	if r := get("/api/tracks", "", ""); r.StatusCode != 200 {
+		t.Errorf("auth off: %d", r.StatusCode)
+	}
+}
+
+func TestCrossOrigin(t *testing.T) {
+	e := newEnv(t)
+	post := func(hdr map[string]string) int {
+		t.Helper()
+		req, _ := http.NewRequest("POST", e.url+"/api/playlists", strings.NewReader(`{"name":"x"}`))
+		req.Header.Set("Content-Type", "text/plain") // what a cross-site <form> or no-cors fetch can send
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	host := strings.TrimPrefix(e.url, "http://")
+	for _, c := range []struct {
+		hdr  map[string]string
+		want int
+	}{
+		{nil, 201}, // curl
+		{map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": e.url}, 201},
+		{map[string]string{"Origin": "http://" + host}, 201}, // older browsers: no Sec-Fetch-Site
+		{map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"}, 403},
+		{map[string]string{"Sec-Fetch-Site": "same-site", "Origin": "http://other." + host}, 403},
+		{map[string]string{"Origin": "https://evil.example"}, 403},
+		{map[string]string{"Origin": "null"}, 403},
+	} {
+		if got := post(c.hdr); got != c.want {
+			t.Errorf("%v: %d, want %d", c.hdr, got, c.want)
+		}
+	}
+
+	// Reading is fine from anywhere (CORS still keeps the response from
+	// other sites), and every response carries the security headers.
+	req, _ := http.NewRequest("GET", e.url+"/api/tracks", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("cross-site GET: %d", resp.StatusCode)
+	}
+	for _, h := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"} {
+		if resp.Header.Get(h) == "" {
+			t.Errorf("missing %s", h)
+		}
+	}
+}
