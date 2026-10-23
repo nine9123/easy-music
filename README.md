@@ -1,7 +1,18 @@
 # easy-music
 
 A small self-hosted music server for one person's library. A single Go binary
-(standard library only), a web UI with no build step, and a Docker image.
+(standard library only), a web UI with no build step, and a Docker image. It
+idles at about 20–35 MiB of memory and no measurable CPU (see
+[Benchmarks](#benchmarks)).
+
+![Radio mode playing, with the queue open](docs/screenshots/radio.png)
+
+| Albums | Music video | Stats |
+|---|---|---|
+| ![Albums grid](docs/screenshots/albums.png) | ![A music video playing above the track list](docs/screenshots/video.png) | ![Listening stats](docs/screenshots/stats.png) |
+
+<sub>Screenshots use a generated demo library (made-up artists, generated
+covers).</sub>
 
 - **Library**: scans read-only directories (MP3, FLAC, Ogg/Opus, M4A/AAC, WAV),
   reads tags, falls back to `Artist/Album/01 - Title` paths. Browse tracks,
@@ -81,9 +92,44 @@ a changed or deleted source is pruned on the next scan.
 | `COVER_FETCH` | `true` | look up missing album covers on MusicBrainz / Cover Art Archive |
 | `YTDLP` | `yt-dlp` | yt-dlp binary |
 | `YTDLP_ARGS` | – | extra yt-dlp arguments, e.g. `--cookies /config/cookies.txt` |
+| `AUTH_PASSWORD` | – (no login) | require this password (HTTP Basic auth); at least 12 characters |
+| `AUTH_PASSWORD_FILE` | – | read the password from a file instead (Docker secrets) |
+| `AUTH_USER` | `admin` | user name that goes with the password |
 
-There is no login. Run it on your LAN, behind a VPN, or behind a reverse proxy
-that does authentication.
+## Security
+
+Without `AUTH_PASSWORD` there is no login: anyone who can reach the port can
+play, change playlists, add stations and queue imports. That's fine on a
+trusted LAN or behind a VPN; anywhere else, set a password or put it behind a
+reverse proxy that authenticates.
+
+- **Password.** `AUTH_PASSWORD` turns on HTTP Basic auth for everything
+  except `/healthz` (idlegate and the Docker health check need it). The
+  browser asks once and remembers it for the tab, so audio, video and covers
+  just work. The password must be at least 12 characters: the server can't
+  tell a brute-force attempt behind a proxy from you, so the password itself
+  has to be out of reach of guessing. It is compared in constant time, and
+  failed logins are logged with the client address. Prefer
+  `AUTH_PASSWORD_FILE` to keep it out of `docker inspect`.
+- **Use HTTPS outside your LAN.** Basic auth sends the password with every
+  request, readable by anyone on the path when the connection is plain HTTP.
+  Terminate TLS at a reverse proxy (Caddy, Traefik, nginx) in front of
+  idlegate.
+- **Cross-site requests are refused.** Any change (`POST`, `PUT`, `PATCH`,
+  `DELETE`) sent by another web site gets a 403, using the browser's
+  `Sec-Fetch-Site` header (or `Origin` on older browsers). Without this, any
+  page you visit could add stations, queue imports or delete playlists through
+  your browser, password or not: browsers resend Basic credentials and proxy
+  cookies on cross-site requests. `curl` and scripts, which send neither
+  header, are not affected.
+- **Headers.** A strict Content-Security-Policy (the UI loads nothing but its
+  own files), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: same-origin` on every response. The UI builds the page
+  without `innerHTML`, so tags from an imported video can't inject markup.
+- **What the server fetches.** Radio stations are relayed through the server,
+  and imports run yt-dlp on the URL you give it, so whoever can use the UI can
+  make the server fetch a URL, including ones on your LAN. Another reason to
+  keep it private or behind a password.
 
 ## Radio mode
 
@@ -170,6 +216,40 @@ been idle and starts them on the next request. easy-music is built for that:
 An import keeps going only while the container is awake. Leave the Import page
 open while it downloads (its progress polling keeps the container awake), or
 let it resume on the next visit.
+
+## Benchmarks
+
+Measured on the binary built by the Dockerfile (`-trimpath -ldflags="-s -w"`,
+6.5 MiB), Linux arm64 in Docker on an Apple-silicon Mac, with
+`HOTCACHE_SIZE=0` and `COVER_FETCH=false`. Memory is the process's resident
+set (`VmRSS`), CPU is `utime + stime` from `/proc/<pid>/stat` over the
+period.
+
+| | 32 tracks | 9,790 tracks |
+|---|---|---|
+| Memory, idle | 18 MiB | 20 MiB |
+| Memory, after a full scan / API load | – | 27–31 MiB |
+| CPU, 60 s idle | 0 ms | 0 ms |
+| CPU, 60 s of radio playing in a browser (page load included) | 10 ms | – |
+| Start to first response (cached index) | – | 31 ms |
+| Cold scan (files in the page cache) | 12 ms | 0.7 s |
+| `GET /api/tracks?limit=200&sort=plays` | – | 0.5 ms |
+| `GET /api/tracks?q=…` (search) | – | 2.5 ms |
+| `GET /api/albums` / `/api/artists` | – | 2.9 / 3.7 ms |
+| `POST /api/mix` (10 radio picks) | – | 9.9 ms |
+
+Streaming is a file copy: ten full downloads of a 31 MiB FLAC back to back
+used 10 ms of CPU in total. Idle really is idle: no polling and nothing
+scheduled while nobody is using it (the optional `SCAN_INTERVAL` aside).
+
+On the author's home server (Docker, real library, music playing) the
+container sits at 0 % CPU, about 33 MiB of memory and 165 B/s of network
+traffic: the heartbeat, and a browser that has already buffered the song.
+
+A first scan from a spinning disk is bound by the disk, not by easy-music: it
+reads each file's tags once and checkpoints every 30 seconds. Later starts load
+the cached index from the SSD and don't touch the HDD unless `SCAN_ON_START` is
+on.
 
 ## API
 

@@ -37,7 +37,17 @@ type Config struct {
 
 	YTDLP     string   // yt-dlp binary
 	YTDLPArgs []string // extra arguments
+
+	// AuthUser and AuthPassword turn on HTTP Basic authentication. An empty
+	// password leaves the server open.
+	AuthUser     string
+	AuthPassword string
 }
+
+// MinPasswordLength is enforced on AUTH_PASSWORD: the server can't tell a
+// brute-force attempt behind a proxy from its owner, so the password itself
+// has to be out of reach of guessing.
+const MinPasswordLength = 12
 
 // FromEnv builds a Config from environment variables, applying defaults.
 func FromEnv() (Config, error) {
@@ -50,8 +60,18 @@ func FromEnv() (Config, error) {
 		YTDLP:            env("YTDLP", "yt-dlp"),
 		YTDLPArgs:        strings.Fields(os.Getenv("YTDLP_ARGS")),
 		HotCacheMinPlays: 3,
+		AuthUser:         env("AUTH_USER", "admin"),
 	}
 	var err error
+	if c.AuthPassword, err = secretEnv("AUTH_PASSWORD"); err != nil {
+		return c, err
+	}
+	if c.AuthPassword != "" && len([]rune(c.AuthPassword)) < MinPasswordLength {
+		return c, fmt.Errorf("AUTH_PASSWORD: use at least %d characters", MinPasswordLength)
+	}
+	if c.AuthPassword != "" && c.AuthUser == "" {
+		return c, fmt.Errorf("AUTH_USER: empty, but AUTH_PASSWORD is set")
+	}
 	if c.ScanOnStart, err = boolEnv("SCAN_ON_START", true); err != nil {
 		return c, err
 	}
@@ -88,6 +108,24 @@ func env(k, def string) string {
 		return strings.TrimSpace(v)
 	}
 	return def
+}
+
+// secretEnv reads k, or the file named by k_FILE (Docker secrets). Setting
+// both is an error rather than a guess about which one wins. Surrounding
+// whitespace (a trailing newline in the file) is not part of the secret.
+func secretEnv(k string) (string, error) {
+	v, file := os.Getenv(k), os.Getenv(k+"_FILE")
+	switch {
+	case v != "" && file != "":
+		return "", fmt.Errorf("%s and %s_FILE are both set", k, k)
+	case file != "":
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("%s_FILE: %w", k, err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	return strings.TrimSpace(v), nil
 }
 
 func boolEnv(k string, def bool) (bool, error) {

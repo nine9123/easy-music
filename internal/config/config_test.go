@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -39,5 +41,42 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("HOTCACHE_MIN_PLAYS", "0")
 	if _, err := FromEnv(); err == nil {
 		t.Errorf("HOTCACHE_MIN_PLAYS=0 accepted")
+	}
+}
+
+func TestAuthFromEnv(t *testing.T) {
+	t.Setenv("MUSIC_DIRS", "/a")
+	c, err := FromEnv()
+	if err != nil || c.AuthPassword != "" {
+		t.Fatalf("no password: %+v, %v", c, err)
+	}
+
+	t.Setenv("AUTH_PASSWORD", "short")
+	if _, err := FromEnv(); err == nil {
+		t.Errorf("short AUTH_PASSWORD accepted")
+	}
+	t.Setenv("AUTH_PASSWORD", "correct horse battery")
+	if c, err = FromEnv(); err != nil || c.AuthUser != "admin" || c.AuthPassword != "correct horse battery" {
+		t.Errorf("AUTH_PASSWORD: %q %q, %v", c.AuthUser, c.AuthPassword, err)
+	}
+	t.Setenv("AUTH_USER", "")
+	if _, err := FromEnv(); err == nil {
+		t.Errorf("empty AUTH_USER accepted")
+	}
+	t.Setenv("AUTH_USER", "me")
+
+	file := filepath.Join(t.TempDir(), "pw")
+	os.WriteFile(file, []byte("from a docker secret\n"), 0o600)
+	t.Setenv("AUTH_PASSWORD_FILE", file)
+	if _, err := FromEnv(); err == nil {
+		t.Errorf("AUTH_PASSWORD and AUTH_PASSWORD_FILE both accepted")
+	}
+	t.Setenv("AUTH_PASSWORD", "")
+	if c, err = FromEnv(); err != nil || c.AuthUser != "me" || c.AuthPassword != "from a docker secret" {
+		t.Errorf("AUTH_PASSWORD_FILE: %q %q, %v", c.AuthUser, c.AuthPassword, err)
+	}
+	t.Setenv("AUTH_PASSWORD_FILE", file+".missing")
+	if _, err := FromEnv(); err == nil {
+		t.Errorf("missing AUTH_PASSWORD_FILE accepted")
 	}
 }
