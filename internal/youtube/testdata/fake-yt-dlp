@@ -1,9 +1,12 @@
 #!/bin/sh
 # Stand-in for yt-dlp in tests. Understands only the arguments the importer
-# passes: a probe (--skip-download --print ...) and a download (-o TEMPLATE).
-probe=""; out=""; url=""
+# passes: a playlist listing (--flat-playlist), a probe (--skip-download
+# --print ...) and a download (-o TEMPLATE). Video IDs come from v=ID in the
+# URL (default vid123); a URL with list= is a three-video playlist.
+probe=""; flat=""; out=""; url=""
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--flat-playlist) flat=1 ;;
 	--skip-download) probe=1 ;;
 	-o) out="$2"; shift ;;
 	--) url="$2"; shift ;;
@@ -13,8 +16,26 @@ done
 case "$url" in
 *fail*) echo "ERROR: [youtube] fail: Video unavailable" >&2; exit 1 ;;
 esac
+id=$(printf '%s' "$url" | sed -n 's/.*[?&]v=\([A-Za-z0-9_-]*\).*/\1/p')
+[ -n "$id" ] || id=vid123
+if [ -n "$flat" ]; then
+	case "$url" in
+	*empty*) exit 0 ;;
+	*list=*)
+		printf 'https://www.youtube.com/watch?v=plA\tMy Mix\tArtist - First\n'
+		printf 'NA\tMy Mix\t[Private video]\n'
+		printf 'https://www.youtube.com/watch?v=plB\tMy Mix\tArtist - Second\n'
+		printf 'https://www.youtube.com/watch?v=plC\tMy Mix\tArtist - Third\n' ;;
+	*) printf '%s\tNA\tArtist - Song (Official Video)\n' "$url" ;;
+	esac
+	exit 0
+fi
 if [ -n "$probe" ]; then
-	printf 'vid123\tArtist - Song (Official Video)\n'
+	if [ "$id" = vid123 ]; then
+		printf 'vid123\tArtist - Song (Official Video)\n'
+	else
+		printf '%s\tArtist - %s\n' "$id" "$id"
+	fi
 	exit 0
 fi
 case "$url" in

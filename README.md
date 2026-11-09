@@ -24,7 +24,8 @@ covers).</sub>
 - **Import from URL**: paste a YouTube link (or anything
   [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports) and get a local copy:
   video plus a separate audio file, cover and metadata, optionally straight into
-  a playlist.
+  a playlist. Tick "Whole playlist" to import every video of a playlist (up to
+  500), in order.
 - **Radio mode**: "more like this" from any track, with variety enforced (see
   [below](#radio-mode)). Shuffle uses the same rules.
 - **Playlists** (drag tracks, albums, artists, imports or queue entries onto

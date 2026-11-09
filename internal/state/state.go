@@ -66,9 +66,13 @@ type Job struct {
 	Progress   float64 `json:"progress"` // 0..100
 	Error      string  `json:"error,omitempty"`
 	PlaylistID string  `json:"playlistId,omitempty"`
-	TrackID    string  `json:"trackId,omitempty"`
-	Created    int64   `json:"created"`
-	Updated    int64   `json:"updated"`
+	// WholePlaylist makes the job list the URL's playlist and queue one
+	// import per entry instead of downloading a single video.
+	WholePlaylist bool   `json:"wholePlaylist,omitempty"`
+	Entries       int    `json:"entries,omitempty"` // videos queued by a WholePlaylist job
+	TrackID       string `json:"trackId,omitempty"`
+	Created       int64  `json:"created"`
+	Updated       int64  `json:"updated"`
 }
 
 // Play is one entry of the listening history.
@@ -476,13 +480,23 @@ func (s *Store) Jobs() []Job {
 
 // AddJob queues an import.
 func (s *Store) AddJob(url, playlistID string) Job {
+	return s.AddJobs([]Job{{URL: url, PlaylistID: playlistID}})[0]
+}
+
+// AddJobs queues several imports at once, in order. Only URL, Title,
+// PlaylistID and WholePlaylist are taken from the arguments.
+func (s *Store) AddJobs(jobs []Job) []Job {
 	now := s.now().Unix()
-	j := &Job{ID: NewID(), URL: url, Status: JobQueued, PlaylistID: playlistID, Created: now, Updated: now}
+	out := make([]Job, 0, len(jobs))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.d.Jobs = append(s.d.Jobs, j)
+	for _, in := range jobs {
+		j := &Job{ID: NewID(), URL: in.URL, Title: in.Title, Status: JobQueued, PlaylistID: in.PlaylistID, WholePlaylist: in.WholePlaylist, Created: now, Updated: now}
+		s.d.Jobs = append(s.d.Jobs, j)
+		out = append(out, *j)
+	}
 	s.changed()
-	return *j
+	return out
 }
 
 // NextJob returns the oldest queued job.
