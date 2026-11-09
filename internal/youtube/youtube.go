@@ -67,15 +67,25 @@ func (im *Importer) Available() bool {
 	return err == nil
 }
 
-// Enqueue validates the URL and queues an import.
-func (im *Importer) Enqueue(raw, playlistID string) (state.Job, error) {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return state.Job{}, fmt.Errorf("not an http(s) URL: %q", raw)
+// Enqueue validates the URL and queues an import. With wholePlaylist the job
+// lists the playlist the URL points to (or is part of) and queues one import
+// per video, all going into playlistID in the playlist's order.
+func (im *Importer) Enqueue(raw, playlistID string, wholePlaylist bool) (state.Job, error) {
+	u, err := parseURL(raw)
+	if err != nil {
+		return state.Job{}, err
 	}
-	j := im.st.AddJob(u.String(), playlistID)
+	j := im.st.AddJobs([]state.Job{{URL: u, PlaylistID: playlistID, WholePlaylist: wholePlaylist}})[0]
 	im.kick()
 	return j, nil
+}
+
+func parseURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("not an http(s) URL: %q", raw)
+	}
+	return u.String(), nil
 }
 
 func (im *Importer) kick() {
@@ -155,7 +165,13 @@ func (im *Importer) run(parent, ctx context.Context, job state.Job) {
 	update(true, func(j *state.Job) { j.Status, j.Error, j.Progress = state.JobRunning, "", 0 })
 	log.Printf("import: %s", job.URL)
 
-	trackID, err := im.download(ctx, job, update)
+	var trackID string
+	var err error
+	if job.WholePlaylist {
+		err = im.expand(ctx, job, update)
+	} else {
+		trackID, err = im.download(ctx, job, update)
+	}
 	switch {
 	case err == nil:
 		// Finished, even if a cancel or shutdown arrived at the last moment.
@@ -168,6 +184,69 @@ func (im *Importer) run(parent, ctx context.Context, job state.Job) {
 		log.Printf("import: %s: %v", job.URL, err)
 		update(true, func(j *state.Job) { j.Status, j.Error = state.JobFailed, err.Error() })
 	}
+}
+
+// MaxPlaylistEntries bounds how many videos one playlist import queues, so a
+// channel URL with thousands of uploads doesn't flood the queue (and
+// state.json). Only the first ones are taken; the job's title says so.
+const MaxPlaylistEntries = 500
+
+// expand lists the entries of a playlist without downloading anything and
+// queues an ordinary import for each. The playlist job itself is then done:
+// its entries show up (and can be retried or canceled) as jobs of their own.
+func (im *Importer) expand(ctx context.Context, job state.Job, update func(bool, func(*state.Job))) error {
+	out, err := im.cmd(ctx, "--yes-playlist", "--flat-playlist", "--skip-download", "--no-warnings",
+		"--playlist-items", fmt.Sprintf("1:%d", MaxPlaylistEntries+1),
+		"--print", "%(webpage_url,url)s\t%(playlist_title)s\t%(title)s", "--", job.URL).Output()
+	if err != nil {
+		return cmdError(err)
+	}
+	var entries []state.Job
+	var plTitle string
+	more := false
+	for _, line := range strings.Split(string(out), "\n") {
+		// The URL goes first: titles could contain a tab, URLs can't.
+		f := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 3)
+		if len(f) != 3 {
+			continue
+		}
+		u, err := parseURL(f[0])
+		if err != nil {
+			continue // e.g. "NA" for an entry yt-dlp couldn't resolve
+		}
+		if len(entries) == MaxPlaylistEntries {
+			more = true
+			break
+		}
+		if plTitle == "" && f[1] != "NA" {
+			plTitle = f[1]
+		}
+		title := f[2]
+		if title == "NA" {
+			title = ""
+		}
+		entries = append(entries, state.Job{URL: u, Title: title, PlaylistID: job.PlaylistID})
+	}
+	if len(entries) == 0 {
+		return errors.New("no videos found at this URL")
+	}
+	if plTitle == "" {
+		plTitle = "Playlist"
+	}
+	summary := fmt.Sprintf("%s (%d videos)", plTitle, len(entries))
+	switch {
+	case more:
+		summary = fmt.Sprintf("%s (first %d videos)", plTitle, len(entries))
+	case len(entries) == 1:
+		summary = plTitle + " (1 video)"
+	}
+	update(true, func(j *state.Job) { j.Title, j.Entries = summary, len(entries) })
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	im.st.AddJobs(entries)
+	log.Printf("import: %s: queued %d videos", job.URL, len(entries))
+	return nil
 }
 
 func (im *Importer) download(ctx context.Context, job state.Job, update func(bool, func(*state.Job))) (string, error) {

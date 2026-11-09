@@ -311,6 +311,52 @@ func TestPlaylistsAndImport(t *testing.T) {
 	}
 }
 
+func TestImportWholePlaylist(t *testing.T) {
+	e := newEnv(t)
+	var pl playlistSummary
+	e.do("POST", "/api/playlists", map[string]any{"name": "Mix"}, &pl)
+	var job state.Job
+	if r := e.do("POST", "/api/downloads", map[string]any{"url": "https://www.youtube.com/playlist?list=PL1", "playlistId": pl.ID, "wholePlaylist": true}, &job); r.StatusCode != 202 || !job.WholePlaylist {
+		t.Fatalf("download: %d %+v", r.StatusCode, job)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var res struct{ Jobs []state.Job }
+		e.do("GET", "/api/downloads", nil, &res)
+		done := 0
+		for _, j := range res.Jobs {
+			if j.Status == state.JobFailed {
+				t.Fatalf("job failed: %+v", j)
+			}
+			if j.Status == state.JobDone {
+				done++
+			}
+		}
+		if done == 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("jobs: %+v", res.Jobs)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	var full struct {
+		Tracks []trackView `json:"tracks"`
+	}
+	e.do("GET", "/api/playlists/"+pl.ID, nil, &full)
+	var got []string
+	for _, tr := range full.Tracks {
+		got = append(got, tr.ID)
+	}
+	var want []string
+	for _, id := range []string{"plA", "plB", "plC"} {
+		want = append(want, e.lib.TrackID(library.DownloadsRoot, "youtube/"+id+".m4a"))
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("playlist tracks = %v, want %v", got, want)
+	}
+}
+
 func TestRadio(t *testing.T) {
 	e := newEnv(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

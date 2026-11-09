@@ -9,15 +9,18 @@ func (s *Server) listDownloads(w http.ResponseWriter, r *http.Request) {
 }
 
 // addDownload: POST {"url": "...", "playlistId"?: "..."} queues an import;
-// when it finishes the track is added to the playlist.
+// when it finishes the track is added to the playlist. With
+// "wholePlaylist": true the URL's playlist is listed and every video in it
+// is queued (and added to the playlist, in order).
 func (s *Server) addDownload(w http.ResponseWriter, r *http.Request) {
 	if !s.yt.Available() {
 		writeError(w, r, http.StatusServiceUnavailable, "imports need DOWNLOAD_DIR and yt-dlp")
 		return
 	}
 	var body struct {
-		URL        string `json:"url"`
-		PlaylistID string `json:"playlistId"`
+		URL           string `json:"url"`
+		PlaylistID    string `json:"playlistId"`
+		WholePlaylist bool   `json:"wholePlaylist"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -28,7 +31,7 @@ func (s *Server) addDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	j, err := s.yt.Enqueue(body.URL, body.PlaylistID)
+	j, err := s.yt.Enqueue(body.URL, body.PlaylistID, body.WholePlaylist)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, err.Error())
 		return

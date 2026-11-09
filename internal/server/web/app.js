@@ -804,15 +804,16 @@ async function renderPlaylist(token, id) {
     },
   };
   const urlIn = h('input', { type: 'url', placeholder: 'Paste a YouTube URL to download it into this playlist (audio + video)' });
+  const whole = wholePlaylistToggle(urlIn);
   const importForm = h('form', { class: 'panel-form', onsubmit: async e => {
     e.preventDefault();
     try {
-      await api.post('/api/downloads', { url: urlIn.value, playlistId: id });
-      urlIn.value = '';
-      toast('Importing… it will appear here when done');
+      await api.post('/api/downloads', { url: urlIn.value, playlistId: id, wholePlaylist: whole.box.checked });
+      toast(whole.box.checked ? 'Importing the playlist… videos will appear here as they finish' : 'Importing… it will appear here when done');
+      urlIn.value = ''; whole.box.checked = false;
       watchImports(token, () => route());
     } catch (err) { fail(err); }
-  } }, urlIn, h('button', { class: 'primary' }, 'Import'));
+  } }, urlIn, whole.el, h('button', { class: 'primary' }, 'Import'));
   const dur = pl.tracks.reduce((s, t) => s + (t.duration || 0), 0);
   // Dropping below the last row (or on an empty playlist) adds at the end.
   const dropZone = h('div', { class: 'playlist-drop' },
@@ -884,6 +885,22 @@ async function renderRadio(token) {
 
 let importStatus = { available: false };
 
+// The "whole playlist" checkbox of an import form. It ticks itself for a
+// playlist page URL (youtube.com/playlist?list=…), where importing only the
+// first video is never what was meant; a video URL that merely carries a
+// list= (e.g. played from a mix) stays a single video unless ticked.
+function wholePlaylistToggle(urlIn) {
+  const box = h('input', { type: 'checkbox' });
+  urlIn.addEventListener('input', () => {
+    try {
+      const u = new URL(urlIn.value.trim());
+      if (u.searchParams.has('list') && !u.searchParams.has('v')) box.checked = true;
+    } catch { /* not a URL yet */ }
+  });
+  const el = h('label', { class: 'check', title: 'Download every video of the playlist this URL points to or belongs to' }, box, 'Whole playlist');
+  return { box, el };
+}
+
 // Poll while imports are active and this view is open. Polling only then
 // matters behind idlegate: a page that polled forever would keep the server
 // awake for as long as a tab is open.
@@ -909,10 +926,11 @@ async function renderImport(token) {
   if (token !== viewToken) return;
   const urlIn = h('input', { type: 'url', placeholder: 'https://www.youtube.com/watch?v=…', required: true });
   const plSel = h('select', null, h('option', { value: '' }, 'No playlist'), playlists.map(p => h('option', { value: p.id }, p.name)));
+  const whole = wholePlaylistToggle(urlIn);
   const jobs = h('div', { class: 'list' });
   const drawJobs = list => jobs.replaceChildren(...(list.length ? list.map(j => jobRow(j, h('div', { class: 'row' },
     h('div', { class: 't' },
-      h('div', { class: 'ellipsis' }, j.title || j.url),
+      h('div', { class: 'ellipsis' }, j.wholePlaylist ? 'Playlist: ' : '', j.title || j.url),
       h('div', { class: 'muted small ellipsis' }, j.url),
       j.error ? h('div', { class: 'small error' }, j.error) : null),
     j.status === 'running' ? h('progress', { max: 100, value: j.progress }) : h('span', { class: 'muted small' }, j.status),
@@ -951,13 +969,14 @@ async function renderImport(token) {
     res.available ? h('form', { class: 'panel-form', onsubmit: async e => {
       e.preventDefault();
       try {
-        await api.post('/api/downloads', { url: urlIn.value, playlistId: plSel.value });
-        urlIn.value = '';
+        await api.post('/api/downloads', { url: urlIn.value, playlistId: plSel.value, wholePlaylist: whole.box.checked });
+        urlIn.value = ''; whole.box.checked = false;
         await refresh();
       } catch (err) { fail(err); }
-    } }, urlIn, plSel, h('button', { class: 'primary' }, 'Download')) :
+    } }, urlIn, whole.el, plSel, h('button', { class: 'primary' }, 'Download')) :
       h('p', { class: 'error' }, 'Imports are unavailable: the server needs a writable DOWNLOAD_DIR and yt-dlp (both are in the Docker image).'),
     h('p', { class: 'muted small' }, 'Downloads the video (up to 1080p) and its audio into your library as one track with a music video. ' +
+      'Tick "Whole playlist" to queue every video of a playlist (up to 500), in order, into the chosen playlist. ' +
       'If the server is stopped mid-download (e.g. idlegate putting it to sleep), the download resumes the next time it starts.'),
     jobs);
   drawJobs(res.jobs);

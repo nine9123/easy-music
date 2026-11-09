@@ -130,6 +130,7 @@ progress { width: 160px; accent-color: var(--accent); }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
 .panel-form { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .panel-form input[type=url], .panel-form input[type=text] { flex: 1; min-width: 260px; }
+.panel-form .check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
 .empty { color: var(--muted); padding: 30px 0; }
 
 .menu { position: fixed; z-index: 10; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 0; min-width: 180px; box-shadow: 0 6px 20px #0008; }
